@@ -1,0 +1,142 @@
+import cv2
+import numpy as np
+import threading
+import time
+import keyboard
+import tkinter as tk
+from PIL import Image, ImageTk
+import mss
+
+# Region of the pickpocket bar on screen
+REGION = {'top': 670, 'left': 750, 'width': 420, 'height': 20}
+CAPTURE_INTERVAL = 0.005
+
+running = False
+has_activated = False
+
+def run_bot():
+    global running, has_activated
+    already_triggered = False
+    red_only_start = None
+
+    time.sleep(1)  # Delay before detection starts
+
+    with mss.mss() as sct:
+        while running:
+            try:
+                frame = np.array(sct.grab(REGION))
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+                # Green detection
+                lower_green = np.array([40, 50, 50])
+                upper_green = np.array([90, 255, 255])
+                green_mask = cv2.inRange(hsv, lower_green, upper_green)
+                contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                green_zones = [cv2.boundingRect(cnt) for cnt in contours if cv2.contourArea(cnt) > 5]
+
+                if not green_zones:
+                    if has_activated:
+                        if red_only_start is None:
+                            red_only_start = time.time()
+                        elif time.time() - red_only_start > 1.5:
+                            print("No green detected — auto-stopping.")
+                            stop_bot()
+                            return
+                else:
+                    red_only_start = None
+
+                # Arrow detection
+                lower_arrow = np.array([0, 0, 180])
+                upper_arrow = np.array([180, 60, 255])
+                arrow_mask = cv2.inRange(hsv, lower_arrow, upper_arrow)
+                arrow_coords = cv2.findNonZero(arrow_mask)
+
+                if arrow_coords is not None:
+                    avg_arrow_x = int(np.mean(arrow_coords[:, 0, 0]))
+                    in_green = any(x <= avg_arrow_x <= x + w for (x, y, w, h) in green_zones)
+
+                    if in_green and not already_triggered:
+                        print("Arrow in green — pressing space")
+                        keyboard.press_and_release('space')
+                        time.sleep(0.1)
+                        keyboard.press_and_release('space')
+                        already_triggered = True
+                        has_activated = True
+                        time.sleep(0.1)
+                    elif not in_green:
+                        already_triggered = False
+
+            except Exception as e:
+                print(f"Bot error: {e}")
+            time.sleep(CAPTURE_INTERVAL)
+
+def toggle_bot():
+    global running, has_activated
+    if not running:
+        running = True
+        has_activated = False
+        update_ui(running=True)
+        threading.Thread(target=run_bot, daemon=True).start()
+    else:
+        stop_bot()
+
+def stop_bot():
+    global running
+    running = False
+    update_ui(running=False)
+
+def update_ui(running):
+    if running:
+        start_button.config(text="Stop", bg="#ff6666")
+        status_label.config(text="Running", fg="green")
+    else:
+        start_button.config(text="Start", bg="#66cc66")
+        status_label.config(text="Stopped", fg="red")
+
+def on_hotkey():
+    toggle_bot()
+
+# --- GUI Setup ---
+root = tk.Tk()
+root.title("Pickpocket Bot MK2")
+root.geometry("300x250")
+root.attributes("-topmost", True)
+root.resizable(False, False)
+
+frame = tk.Frame(root, padx=10, pady=10)
+frame.pack(expand=True)
+
+# Logo (optional)
+try:
+    logo_img = Image.open("logo.png").resize((70, 70), Image.LANCZOS)
+    logo_photo = ImageTk.PhotoImage(logo_img)
+    logo_label = tk.Label(frame, image=logo_photo)
+    logo_label.image = logo_photo
+    logo_label.pack()
+except Exception as e:
+    print("Logo not loaded:", e)
+
+tk.Label(frame, text="Developed by: Roma07 on Discord", font=("Helvetica", 9, "bold")).pack(pady=(2, 5))
+
+status_label = tk.Label(frame, text="Stopped", font=("Helvetica", 14), fg="red")
+status_label.pack(pady=(0, 5))
+
+instructions = tk.Label(
+    frame,
+    text="For best success rate, press F8 while in a red part of the pickpocket bar.",
+    font=("Helvetica", 10),
+    fg="black",
+    justify="center",
+    wraplength=280
+)
+instructions.pack(pady=(0, 10))
+
+start_button = tk.Button(frame, text="Start", font=("Helvetica", 12), width=25, bg="#66cc66", command=toggle_bot)
+start_button.pack(pady=5)
+
+hotkey_label = tk.Label(frame, text="Hotkey: F8 to Start/Stop", font=("Helvetica", 9), fg="gray")
+hotkey_label.pack(pady=(5, 0))
+
+keyboard.add_hotkey("F8", on_hotkey)
+
+root.mainloop()
